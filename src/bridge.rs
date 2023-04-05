@@ -47,7 +47,7 @@ impl TcpBridge {
     }
 
     /// Creates an emitting [TcpBridge] which emits connections to `port`
-    pub fn emitt_to(port: u16) -> TcpBridge {
+    pub fn emit_to(port: u16) -> TcpBridge {
         TcpBridge {
             port,
             streams: HashMap::new(),
@@ -140,8 +140,8 @@ impl TcpBridge {
 
     fn extract_from<'a>(&mut self, v_port: u16, buf: &'a mut [u8]) -> Action<'a> {
         let Some(socket) = self.streams.get_mut(&v_port) else {
-      panic!("should not be able to happen")
-    };
+            panic!("should not be able to happen")
+        };
 
         match socket.try_read(buf) {
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => None,
@@ -226,9 +226,9 @@ impl TcpBridge {
         }
 
         let Some(local_tx) = self.streams.get_mut(&v_port) else {
-      warn!("got Data for already closed v_port, {v_port}, emitting NotConnected Error");
-      return Action::Error(v_port, io::Error::new(io::ErrorKind::NotConnected, "err"));
-    };
+            warn!("got Data for already closed v_port, {v_port}, emitting NotConnected Error");
+            return Action::Error(v_port, io::Error::new(io::ErrorKind::NotConnected, "err"));
+        };
 
         match local_tx.write_all(data).await {
             Err(err) => Action::Error(v_port, err),
@@ -320,7 +320,7 @@ mod tests {
         const BRIDGE_PORT: u16 = 10000;
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
         let mut listening = TcpBridge::accepting_from(BRIDGE_PORT).await;
-        let mut emitting = TcpBridge::emitt_to(SERVER_PORT);
+        let mut emitting = TcpBridge::emit_to(SERVER_PORT);
         let mut server_handle = tokio::spawn(dummy_server(kill_rx, SERVER_PORT));
 
         let mut listen_buf = [0u8; 4092];
@@ -340,15 +340,15 @@ mod tests {
             }
             trace!("loop extract");
             select! {
-              Err(err) = &mut server_handle => Err(err).expect("dummy server error"),
-              Err(err) = &mut client_handle => Err(err).expect("dummy client error"),
-              listen_action = listening.extract(&mut listen_buf) => {
-                handle_bridge_action(&mut listening, &mut emitting, listen_action).await.expect("snding action into emitting failed")
-              },
-              emitting_axtion = emitting.extract(&mut emit_buf), if emitting.active_connections() > 0 => {
-                //after first time connecting set emitting to close in order to terminate after the client finished
-                emitting.close();
-                handle_bridge_action(&mut emitting, &mut listening, emitting_axtion).await.expect("sending action into listening failed")},
+                Err(err) = &mut server_handle => Err(err).expect("dummy server error"),
+                Err(err) = &mut client_handle => Err(err).expect("dummy client error"),
+                listen_action = listening.extract(&mut listen_buf) => {
+                    handle_bridge_action(&mut listening, &mut emitting, listen_action).await.expect("snding action into emitting failed")
+                },
+                emitting_axtion = emitting.extract(&mut emit_buf), if emitting.active_connections() > 0 => {
+                    //after first time connecting set emitting to close in order to terminate after the client finished
+                    emitting.close();
+                    handle_bridge_action(&mut emitting, &mut listening, emitting_axtion).await.expect("sending action into listening failed")},
             }
         }
 
@@ -386,9 +386,9 @@ mod tests {
         }
 
         let Action::Error(v_port, err) = response else {
-      // TODO make this a compile time constraint
-      panic!("input is not allowed to return anything but None or Error");
-    };
+            // TODO make this a compile time constraint
+            panic!("input is not allowed to return anything but None or Error");
+        };
 
         trace!("input Error({v_port}, {err} to {}", own.port);
         own.input_error(v_port, err);
@@ -422,8 +422,8 @@ mod tests {
 
         loop {
             select! {
-              _ = &mut kill_rx => break,
-              Ok((stream, _addr)) = listener.accept() => clients.push(tokio::spawn(echo_chamber(stream))),
+                _ = &mut kill_rx => break,
+                Ok((stream, _addr)) = listener.accept() => clients.push(tokio::spawn(echo_chamber(stream))),
             }
         }
 
