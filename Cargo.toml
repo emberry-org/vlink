@@ -1,0 +1,19 @@
+[package]
+name = "port_bridge"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.26.0", features = ["net", "macros", "rt", "sync", "io-util", "time"], optional = true }
+futures = { version = "0.3.27", optional = true }
+log = { version = "0.4", optional = true }
+
+[dev-dependencies]
+env_logger = "0.9"
+
+[features]
+default = ["logic"]
+logic = ["interface", "dep:tokio", "dep:futures", "dep:log"]
+interface = []
