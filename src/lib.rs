@@ -1,5 +1,4 @@
 mod interface;
-#[cfg(feature = "interface")]
 pub use interface::Action;
 
 #[cfg(feature = "logic")]
