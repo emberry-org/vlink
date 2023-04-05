@@ -8,6 +8,9 @@ readme = "README.md"
 repository = "https://github.com/emberry-org/vlink"
 homepage = "https://github.com/emberry-org/vlink"
 description = "vlink made for emberry https://github.com/emberry-org/emberry"
+exclude = [
+    "pre-commit.sh",
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
