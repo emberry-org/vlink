@@ -1,7 +1,13 @@
 [package]
-name = "port_bridge"
+name = "vlink"
 version = "0.1.0"
 edition = "2021"
+authors = ["devensiv <devensiv@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/emberry-org/vlink"
+homepage = "https://github.com/emberry-org/vlink"
+description = "vlink made for emberry https://github.com/emberry-org/emberry"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
