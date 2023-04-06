@@ -10,6 +10,4 @@ pub enum Action<'a> {
     Error(u16, io::Error),
     ///
     AcceptError(io::Error),
-    /// NOP
-    None,
 }

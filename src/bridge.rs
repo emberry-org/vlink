@@ -13,7 +13,6 @@ use tokio::net::{TcpListener, TcpStream};
 use log::{error, trace, warn};
 
 use crate::Action;
-use crate::Action::None;
 
 #[must_use = "TcpBridge does nothing unless extracted from / input to"]
 pub struct TcpBridge {
@@ -65,9 +64,9 @@ impl TcpBridge {
     /// This method is cancel safe.
     /// After a returning action has been selected all internal futures will be dropped.
     /// Underlying futures are all cancel safe, hence this function may be used in [tokio::select]
-    pub async fn extract<'a>(&mut self, buf: &'a mut [u8]) -> Action<'a> {
+    pub async fn extract<'a>(&mut self, buf: &'a mut [u8]) -> Option<Action<'a>> {
         if self.is_closed() {
-            return Action::None;
+            return None;
         }
         let id = self.port;
 
@@ -122,14 +121,14 @@ impl TcpBridge {
                 Extractable::Error(err) => {
                     self.closing = true;
                     self.opt_listener.take();
-                    Action::AcceptError(err)
+                    Some(Action::AcceptError(err))
                 }
                 Extractable::New(socket, v_port) => {
                     if self.streams.insert(v_port, socket).is_some() {
                         error!("cannot accept a socket into a v_port that already has a socket");
                         panic!("this should not happen")
                     }
-                    Action::Connect(v_port)
+                    Some(Action::Connect(v_port))
                 }
                 Extractable::Read(v_port) => self.extract_from(v_port, buf),
             };
@@ -138,7 +137,7 @@ impl TcpBridge {
         None
     }
 
-    fn extract_from<'a>(&mut self, v_port: u16, buf: &'a mut [u8]) -> Action<'a> {
+    fn extract_from<'a>(&mut self, v_port: u16, buf: &'a mut [u8]) -> Option<Action<'a>> {
         let Some(socket) = self.streams.get_mut(&v_port) else {
             panic!("should not be able to happen")
         };
@@ -150,16 +149,16 @@ impl TcpBridge {
                 self.streams
                     .remove(&v_port)
                     .expect("there was no socket to close");
-                Action::Error(v_port, err)
+                Some(Action::Error(v_port, err))
             }
             Ok(0) => {
                 // 0 means EOF, remove and drop the stream
                 self.streams
                     .remove(&v_port)
                     .expect("there was no socket to close");
-                Action::Data(v_port, &[])
+                Some(Action::Data(v_port, &[]))
             }
-            Ok(count) => Action::Data(v_port, &buf[..count]),
+            Ok(count) => Some(Action::Data(v_port, &buf[..count])),
         }
     }
 }
@@ -174,10 +173,9 @@ impl TcpBridge {
     /// some other branch completes first, then the provided action may
     /// have been partially executed, but future calls to `input` will
     /// start over with the action
-    pub async fn input<'a>(&mut self, action: Action<'a>) -> Action {
+    pub async fn input<'a>(&mut self, action: Action<'a>) -> Option<Action> {
         let id = self.port;
         match action {
-            None => None,
             Action::AcceptError(err) => {
                 assert!(
                     self.opt_listener.is_none(),
@@ -185,12 +183,12 @@ impl TcpBridge {
                 );
                 trace!("input AcceptError({err}) in {id}, remote wont accept any more connections");
                 self.closing = true;
-                Action::None
+                None
             }
             Action::Error(v_port, err) => {
                 trace!("input Error({v_port}, {err}) in {id}");
                 self.input_error(v_port, err);
-                Action::None
+                None
             }
             Action::Connect(v_port) => {
                 trace!("input Connect({v_port})");
@@ -215,23 +213,23 @@ impl TcpBridge {
     ///
     /// # Cancel safety
     /// This method is not cancellation safe.
-    async fn write_to<'a>(&mut self, v_port: u16, data: &'a [u8]) -> Action {
+    async fn write_to<'a>(&mut self, v_port: u16, data: &'a [u8]) -> Option<Action> {
         if data.is_empty() {
             // empty a.k.a. len() == 0 means EOF on other side
             // remove and close stream
             self.streams
                 .remove(&v_port)
                 .expect("there was no socket to close");
-            return Action::None;
+            return None;
         }
 
         let Some(local_tx) = self.streams.get_mut(&v_port) else {
             warn!("got Data for already closed v_port, {v_port}, emitting NotConnected Error");
-            return Action::Error(v_port, io::Error::new(io::ErrorKind::NotConnected, "err"));
+            return Some(Action::Error(v_port, io::Error::new(io::ErrorKind::NotConnected, "err")));
         };
 
         match local_tx.write_all(data).await {
-            Err(err) => Action::Error(v_port, err),
+            Err(err) => Some(Action::Error(v_port, err)),
             Ok(()) => None,
         }
     }
@@ -247,13 +245,13 @@ impl TcpBridge {
     /// This method is to be assumed not cancel safe.
     /// The cancel safety of this method cannot be garanteed since the underlying
     /// `socket.connect` future does not make any statements about cancel safety
-    async fn connect_new(&mut self, v_port: u16) -> Action {
+    async fn connect_new(&mut self, v_port: u16) -> Option<Action> {
         assert!(self.opt_listener.is_none()); // ensure we are not the listening side
 
         let addr_l = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port));
         let stream = match TcpStream::connect(addr_l).await {
             Ok(stream) => stream,
-            Err(err) => return Action::Error(v_port, err),
+            Err(err) => return Some(Action::Error(v_port, err)),
         };
 
         self.streams.insert(v_port, stream);
@@ -370,20 +368,21 @@ mod tests {
     async fn handle_bridge_action<'a>(
         own: &mut TcpBridge,
         other: &mut TcpBridge,
-        action: Action<'a>,
+        action: Option<Action<'a>>,
     ) -> io::Result<()> {
         trace!("bridge action in {}", own.port);
 
-        if let Action::None = action {
+        let Some(action) = action else {
             return Ok(());
-        }
+        };
 
         let other_id = other.port();
         let response = other.input(action).await;
         trace!("input to {} result: {response:?}", other_id);
-        if let Action::None = response {
+
+        let Some(response) = response else {
             return Ok(());
-        }
+        };
 
         let Action::Error(v_port, err) = response else {
             // TODO make this a compile time constraint
