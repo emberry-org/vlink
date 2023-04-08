@@ -225,9 +225,7 @@ impl TcpBridge {
         if data.is_empty() {
             // empty a.k.a. len() == 0 means EOF on other side
             // remove and close stream
-            self.streams
-                .remove(&v_port)
-                .expect("there was no socket to close");
+            self.streams.remove(&v_port);
             return None;
         }
 
