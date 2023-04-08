@@ -105,7 +105,7 @@ impl TcpBridge {
         let mut listen_future = ListFut(self.opt_listener.as_ref());
 
         // create futures aggregation (must happen after allocation of the futures because of drop order)
-        let mut futures = FuturesUnordered::<Pin<&mut dyn Future<Output = Extractable>>>::new();
+        let mut futures = FuturesUnordered::<Pin<&mut (dyn Future<Output = Extractable> + Sync + Send)>>::new();
 
         let listen_future_pin = unsafe { Pin::new_unchecked(&mut listen_future) };
         futures.push(listen_future_pin);
