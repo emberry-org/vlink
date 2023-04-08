@@ -11,3 +11,6 @@ pub enum Action<'a> {
     ///
     AcceptError(io::Error),
 }
+
+#[derive(Debug)]
+pub struct ErrorAction(pub u16, pub io::Error);

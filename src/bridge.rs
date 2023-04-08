@@ -12,6 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use log::{error, trace, warn};
 
+use crate::interface::ErrorAction;
 use crate::Action;
 
 #[must_use = "TcpBridge does nothing unless extracted from / input to"]
@@ -20,6 +21,7 @@ pub struct TcpBridge {
     port: u16,
     streams: HashMap<u16, TcpStream>,
     opt_listener: Option<TcpListener>,
+    scheduled: Option<ErrorAction>,
     closing: bool,
 }
 
@@ -39,6 +41,7 @@ impl TcpBridge {
             port,
             streams: HashMap::new(),
             opt_listener: Some(listener),
+            scheduled: None,
             closing: false,
         })
     }
@@ -49,6 +52,7 @@ impl TcpBridge {
             port,
             streams: HashMap::new(),
             opt_listener: std::option::Option::None,
+            scheduled: None,
             closing: false,
         }
     }
@@ -66,6 +70,11 @@ impl TcpBridge {
         if self.is_closed() {
             return None;
         }
+
+        if let Some(ErrorAction(vport, err)) = self.scheduled.take() {
+            return Some(Action::Error(vport, err));
+        }
+
         let id = self.port;
 
         // create arena allocation to avoid boxing futures individually
@@ -172,7 +181,7 @@ impl TcpBridge {
     /// some other branch completes first, then the provided action may
     /// have been partially executed, but future calls to `input` will
     /// start over with the action
-    pub async fn input<'a>(&mut self, action: Action<'a>) -> Option<Action> {
+    pub async fn input<'a>(&mut self, action: Action<'a>) {
         let id = self.port;
         match action {
             Action::AcceptError(err) => {
@@ -182,20 +191,20 @@ impl TcpBridge {
                 );
                 trace!("input AcceptError({err}) in {id}, remote wont accept any more connections");
                 self.closing = true;
-                None
             }
             Action::Error(v_port, err) => {
                 trace!("input Error({v_port}, {err}) in {id}");
                 self.input_error(v_port, err);
-                None
             }
             Action::Connect(v_port) => {
                 trace!("input Connect({v_port})");
-                self.connect_new(v_port).await
+                let action = self.connect_new(v_port).await;
+                self.schedule(action);
             }
             Action::Data(v_port, data) => {
                 trace!("input Data({v_port}, len()={})", data.len());
-                self.write_to(v_port, data).await
+                let action = self.write_to(v_port, data).await;
+                self.schedule(action);
             }
         }
     }
@@ -212,7 +221,7 @@ impl TcpBridge {
     ///
     /// # Cancel safety
     /// This method is not cancellation safe.
-    async fn write_to<'a>(&mut self, v_port: u16, data: &'a [u8]) -> Option<Action> {
+    async fn write_to<'a>(&mut self, v_port: u16, data: &'a [u8]) -> Option<ErrorAction> {
         if data.is_empty() {
             // empty a.k.a. len() == 0 means EOF on other side
             // remove and close stream
@@ -224,11 +233,11 @@ impl TcpBridge {
 
         let Some(local_tx) = self.streams.get_mut(&v_port) else {
             warn!("got Data for already closed v_port, {v_port}, emitting NotConnected Error");
-            return Some(Action::Error(v_port, io::Error::new(io::ErrorKind::NotConnected, "err")));
+            return Some(ErrorAction(v_port, io::Error::new(io::ErrorKind::NotConnected, "err")));
         };
 
         match local_tx.write_all(data).await {
-            Err(err) => Some(Action::Error(v_port, err)),
+            Err(err) => Some(ErrorAction(v_port, err)),
             Ok(()) => None,
         }
     }
@@ -244,13 +253,13 @@ impl TcpBridge {
     /// This method is to be assumed not cancel safe.
     /// The cancel safety of this method cannot be garanteed since the underlying
     /// `socket.connect` future does not make any statements about cancel safety
-    async fn connect_new(&mut self, v_port: u16) -> Option<Action> {
+    async fn connect_new(&mut self, v_port: u16) -> Option<ErrorAction> {
         assert!(self.opt_listener.is_none()); // ensure we are not the listening side
 
         let addr_l = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port));
         let stream = match TcpStream::connect(addr_l).await {
             Ok(stream) => stream,
-            Err(err) => return Some(Action::Error(v_port, err)),
+            Err(err) => return Some(ErrorAction(v_port, err)),
         };
 
         self.streams.insert(v_port, stream);
@@ -280,6 +289,12 @@ impl TcpBridge {
     pub fn close(&mut self) {
         self.closing = true;
         self.opt_listener.take();
+    }
+
+    #[inline]
+    fn schedule(&mut self, action: Option<ErrorAction>) {
+        assert!(self.scheduled.is_none());
+        self.scheduled = action;
     }
 }
 
@@ -316,7 +331,9 @@ mod tests {
         const SERVER_PORT: u16 = 9999;
         const BRIDGE_PORT: u16 = 10000;
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
-        let mut listening = TcpBridge::accepting_from(BRIDGE_PORT).await.expect("could not bind tcp_bridge");
+        let mut listening = TcpBridge::accepting_from(BRIDGE_PORT)
+            .await
+            .expect("could not bind tcp_bridge");
         let mut emitting = TcpBridge::emit_to(SERVER_PORT);
         let mut server_handle = tokio::spawn(dummy_server(kill_rx, SERVER_PORT));
 
@@ -375,21 +392,7 @@ mod tests {
             return Ok(());
         };
 
-        let other_id = other.port();
-        let response = other.input(action).await;
-        trace!("input to {} result: {response:?}", other_id);
-
-        let Some(response) = response else {
-            return Ok(());
-        };
-
-        let Action::Error(v_port, err) = response else {
-            // TODO make this a compile time constraint
-            panic!("input is not allowed to return anything but None or Error");
-        };
-
-        trace!("input Error({v_port}, {err} to {}", own.port);
-        own.input_error(v_port, err);
+        other.input(action).await;
 
         Ok(())
     }
