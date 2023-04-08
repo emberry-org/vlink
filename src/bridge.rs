@@ -31,18 +31,16 @@ impl TcpBridge {
     /// This method is to be assumed not cancel safe.
     /// The cancel safety of this method cannot be garanteed since the underlying
     /// `bind` future does not make any statements about cancel safety
-    pub async fn accepting_from(port: u16) -> TcpBridge {
+    pub async fn accepting_from(port: u16) -> io::Result<TcpBridge> {
         let addr_l = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
-        let listener = TcpListener::bind(addr_l)
-            .await
-            .expect("could not bind vlan socket");
+        let listener = TcpListener::bind(addr_l).await?;
 
-        TcpBridge {
+        Ok(TcpBridge {
             port,
             streams: HashMap::new(),
             opt_listener: Some(listener),
             closing: false,
-        }
+        })
     }
 
     /// Creates an emitting [TcpBridge] which emits connections to `port`
@@ -105,7 +103,8 @@ impl TcpBridge {
         let mut listen_future = ListFut(self.opt_listener.as_ref());
 
         // create futures aggregation (must happen after allocation of the futures because of drop order)
-        let mut futures = FuturesUnordered::<Pin<&mut (dyn Future<Output = Extractable> + Sync + Send)>>::new();
+        let mut futures =
+            FuturesUnordered::<Pin<&mut (dyn Future<Output = Extractable> + Sync + Send)>>::new();
 
         let listen_future_pin = unsafe { Pin::new_unchecked(&mut listen_future) };
         futures.push(listen_future_pin);
@@ -317,7 +316,7 @@ mod tests {
         const SERVER_PORT: u16 = 9999;
         const BRIDGE_PORT: u16 = 10000;
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
-        let mut listening = TcpBridge::accepting_from(BRIDGE_PORT).await;
+        let mut listening = TcpBridge::accepting_from(BRIDGE_PORT).await.expect("could not bind tcp_bridge");
         let mut emitting = TcpBridge::emit_to(SERVER_PORT);
         let mut server_handle = tokio::spawn(dummy_server(kill_rx, SERVER_PORT));
 
