@@ -322,9 +322,8 @@ mod tests {
 
     use crate::{Action, TcpBridge};
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn bridge_test() {
-        _ = env_logger::try_init();
 
         const SERVER_PORT: u16 = 9999;
         const BRIDGE_PORT: u16 = 10000;
