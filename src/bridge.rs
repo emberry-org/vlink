@@ -10,7 +10,7 @@ use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 
-use log::{error, trace, warn};
+use tracing::{error, trace, warn};
 
 use crate::interface::ErrorAction;
 use crate::Action;
@@ -308,10 +308,9 @@ mod tests {
     use std::{
         io,
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-        time::Duration,
     };
 
-    use log::trace;
+    use tracing::{trace, instrument, Instrument};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
@@ -339,29 +338,31 @@ mod tests {
 
         let mut client_handle = tokio::spawn(dummy_client(BRIDGE_PORT));
 
-        // give time for the server dummy server to start
-        tokio::time::sleep(Duration::from_millis(200)).await; // purely for better readable logs
+        async {
+            loop {
+                let closed_l = listening.is_closed();
+                let closed_e = emitting.is_closed();
+                if closed_l | closed_e {
+                    trace!("closed, Listening: {closed_l}, Emitting: {closed_e}");
+                    break;
+                }
+                trace!("loop extract");
+                select! {
+                    Err(err) = &mut server_handle => Err(err).expect("dummy server error"),
+                    Err(err) = &mut client_handle => Err(err).expect("dummy client error"),
+                    listen_action = listening.extract(&mut listen_buf) => {
+                        handle_bridge_action(&mut listening, &mut emitting, listen_action).await.expect("snding action into emitting failed")
+                    },
+                    emitting_axtion = emitting.extract(&mut emit_buf), if emitting.active_connections() > 0 => {
+                        //after first time connecting set emitting to close in order to terminate after the client finished
+                        emitting.close();
+                        handle_bridge_action(&mut emitting, &mut listening, emitting_axtion).await.expect("sending action into listening failed")},
+                }
+            }
+        }.instrument(tracing::trace_span!("bridge")).await;
 
-        loop {
-            let closed_l = listening.is_closed();
-            let closed_e = emitting.is_closed();
-            if closed_l | closed_e {
-                trace!("closed, Listening: {closed_l}, Emitting: {closed_e}");
-                break;
-            }
-            trace!("loop extract");
-            select! {
-                Err(err) = &mut server_handle => Err(err).expect("dummy server error"),
-                Err(err) = &mut client_handle => Err(err).expect("dummy client error"),
-                listen_action = listening.extract(&mut listen_buf) => {
-                    handle_bridge_action(&mut listening, &mut emitting, listen_action).await.expect("snding action into emitting failed")
-                },
-                emitting_axtion = emitting.extract(&mut emit_buf), if emitting.active_connections() > 0 => {
-                    //after first time connecting set emitting to close in order to terminate after the client finished
-                    emitting.close();
-                    handle_bridge_action(&mut emitting, &mut listening, emitting_axtion).await.expect("sending action into listening failed")},
-            }
-        }
+        let span = tracing::trace_span!("closing");
+        let _guard = span.enter();
 
         trace!("wait on client handle end");
         client_handle
@@ -394,6 +395,7 @@ mod tests {
         Ok(())
     }
 
+    #[instrument]
     async fn dummy_client(port: u16) -> io::Result<()> {
         let addr_l = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
         let mut stream = TcpStream::connect(addr_l).await?;
@@ -412,6 +414,7 @@ mod tests {
         Ok(())
     }
 
+    #[instrument]
     async fn dummy_server(mut kill_rx: oneshot::Receiver<()>, port: u16) -> io::Result<()> {
         trace!("start dummy server");
         let addr_l = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
@@ -439,6 +442,7 @@ mod tests {
 
     /// continously reads 16 bytes then writes them back to the stream
     /// terminates upon receiving `[0x00; 16]` before it is echoed
+    #[instrument]
     async fn echo_chamber(mut stream: TcpStream) -> io::Result<()> {
         trace!("start echo chamber");
         loop {
