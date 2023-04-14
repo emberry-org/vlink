@@ -76,14 +76,11 @@ impl TcpBridge {
             return Some(Action::Error(vport, err));
         }
 
-        let id = self.port;
-
         // create arena allocation to avoid boxing futures individually
         let mut read_arena = Vec::with_capacity(self.streams.len());
         for (v_port, socket) in self.streams.iter() {
             let read_future = async {
-                let result = socket.readable().await;
-                trace!("ready reading in {id} with {result:?}");
+                let _result = socket.readable().await;
                 Extractable::Read(*v_port)
             };
             read_arena.push(read_future);
@@ -151,15 +148,19 @@ impl TcpBridge {
             panic!("should not be able to happen")
         };
 
+        let local_port = socket.local_addr().expect("socket should be bound").port();
+        let id = self.port;
         match socket.try_read(buf) {
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 trace!("socket read false positive");
-                None},
+                None
+            }
             Err(err) => {
                 // erorr means socket dead, remove and drop the stream
                 self.streams
                     .remove(&v_port)
                     .expect("there was no socket to close");
+                trace!("extract Error({v_port}, {err}) at {local_port} in {id}");
                 Some(Action::Error(v_port, err))
             }
             Ok(0) => {
@@ -167,9 +168,13 @@ impl TcpBridge {
                 self.streams
                     .remove(&v_port)
                     .expect("there was no socket to close");
+                trace!("extract Data({v_port}, len()={})", 0);
                 Some(Action::Data(v_port, &[]))
             }
-            Ok(count) => Some(Action::Data(v_port, &buf[..count])),
+            Ok(count) => {
+                trace!("extract Data({v_port}, len()={})", count);
+                Some(Action::Data(v_port, &buf[..count]))
+            }
         }
     }
 }
@@ -313,7 +318,6 @@ mod tests {
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     };
 
-    use tracing::{trace, instrument, Instrument};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
@@ -321,12 +325,12 @@ mod tests {
         sync::oneshot,
         task::JoinHandle,
     };
+    use tracing::{instrument, trace, Instrument};
 
     use crate::{Action, TcpBridge};
 
     #[test_log::test(tokio::test)]
     async fn bridge_test() {
-
         const SERVER_PORT: u16 = 9999;
         const BRIDGE_PORT: u16 = 10000;
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
