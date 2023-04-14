@@ -68,6 +68,7 @@ impl TcpBridge {
     /// Underlying futures are all cancel safe, hence this function may be used in [tokio::select]
     pub async fn extract<'a>(&mut self, buf: &'a mut [u8]) -> Option<Action<'a>> {
         if self.is_closed() {
+            warn!("trying to extract from a closed bridge");
             return None;
         }
 
@@ -81,9 +82,8 @@ impl TcpBridge {
         let mut read_arena = Vec::with_capacity(self.streams.len());
         for (v_port, socket) in self.streams.iter() {
             let read_future = async {
-                trace!("poll reading in {id}");
-                _ = socket.readable().await;
-                trace!("ready reading in {id}");
+                let result = socket.readable().await;
+                trace!("ready reading in {id} with {result:?}");
                 Extractable::Read(*v_port)
             };
             read_arena.push(read_future);
@@ -142,6 +142,7 @@ impl TcpBridge {
             };
         }
 
+        warn!("there was nothing to extract");
         None
     }
 
@@ -151,7 +152,9 @@ impl TcpBridge {
         };
 
         match socket.try_read(buf) {
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => None,
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                trace!("socket read false positive");
+                None},
             Err(err) => {
                 // erorr means socket dead, remove and drop the stream
                 self.streams
