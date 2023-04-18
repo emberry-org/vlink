@@ -217,7 +217,7 @@ impl TcpBridge {
         }
     }
 
-    pub fn input_error(&mut self, v_port: u16, _err: io::Error) {
+    fn input_error(&mut self, v_port: u16, _err: io::Error) {
         let stream = self.streams.remove(&v_port).or_else(|| {
             warn!("got ReadError for already closed v_port, {v_port}");
             std::option::Option::None

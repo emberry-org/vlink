@@ -53,4 +53,4 @@ pub enum Action<'a> {
 }
 
 #[derive(Debug)]
-pub struct ErrorAction(pub u16, pub io::Error);
+pub(crate) struct ErrorAction(pub u16, pub io::Error);
