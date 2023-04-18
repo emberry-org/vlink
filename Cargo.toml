@@ -19,10 +19,13 @@ tokio = { version = "1.26.0", features = ["net", "macros", "rt", "sync", "io-uti
 futures = { version = "0.3.27", optional = true }
 tracing = { version = "0.1.37", optional = true }
 
+document-features = "0.2"
+
 [dev-dependencies]
 test-log = { version = "0.2.11", features = [ "trace" ], default-features = false }
 tracing-subscriber = { version = "0.3.16", features = [ "fmt", "env-filter" ] }
 
 [features]
 default = ["logic"]
+## This feature enables the bridge logic of the crate
 logic = ["dep:tokio", "dep:futures", "dep:tracing" ]
