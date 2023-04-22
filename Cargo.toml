@@ -1,8 +1,8 @@
 [package]
 name = "vlink"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
-authors = ["devensiv <devensiv@gmail.com>"]
+authors = ["devensiv <devensiv@devensiv.dev>"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/emberry-org/vlink"

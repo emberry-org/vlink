@@ -297,6 +297,11 @@ impl TcpBridge {
         self.opt_listener.take();
     }
 
+    /// Close all active connections without destroying the bridge
+    pub fn remote_disconnect(&mut self) {
+        self.streams.clear();
+    }
+
     #[inline]
     fn schedule(&mut self, action: Option<ErrorAction>) {
         assert!(self.scheduled.is_none());
