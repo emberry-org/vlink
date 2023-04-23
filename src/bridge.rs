@@ -12,7 +12,6 @@ use tokio::net::{TcpListener, TcpStream};
 
 use tracing::{error, trace, warn};
 
-use crate::interface::ErrorAction;
 use crate::Action;
 
 #[must_use = "TcpBridge does nothing unless extracted from / input to"]
@@ -21,7 +20,6 @@ pub struct TcpBridge {
     port: u16,
     streams: HashMap<u16, TcpStream>,
     opt_listener: Option<TcpListener>,
-    scheduled: Option<ErrorAction>,
     closing: bool,
 }
 
@@ -43,7 +41,6 @@ impl TcpBridge {
             port,
             streams: HashMap::new(),
             opt_listener: Some(listener),
-            scheduled: None,
             closing: false,
         })
     }
@@ -54,7 +51,6 @@ impl TcpBridge {
             port,
             streams: HashMap::new(),
             opt_listener: std::option::Option::None,
-            scheduled: None,
             closing: false,
         }
     }
@@ -72,10 +68,6 @@ impl TcpBridge {
         if self.is_closed() {
             warn!("trying to extract from a closed bridge");
             return None;
-        }
-
-        if let Some(ErrorAction(vport, err)) = self.scheduled.take() {
-            return Some(Action::Error(vport, err));
         }
 
         // create arena allocation to avoid boxing futures individually
@@ -191,7 +183,7 @@ impl TcpBridge {
     /// some other branch completes first, then the provided action may
     /// have been partially executed, but future calls to `input` will
     /// start over with the action
-    pub async fn input<'a>(&mut self, action: Action<'a>) {
+    pub async fn input<'a>(&mut self, action: Action<'a>) -> Option<Action<'a>> {
         let id = self.port;
         match action {
             Action::AcceptError(err) => {
@@ -201,20 +193,20 @@ impl TcpBridge {
                 );
                 trace!("input AcceptError({err}) in {id}, remote wont accept any more connections");
                 self.closing = true;
+                None
             }
             Action::Error(v_port, err) => {
                 trace!("input Error({v_port}, {err}) in {id}");
                 self.input_error(v_port, err);
+                None
             }
             Action::Connect(v_port) => {
                 trace!("input Connect({v_port})");
-                let action = self.connect_new(v_port).await;
-                self.schedule(action);
+                self.connect_new(v_port).await
             }
             Action::Data(v_port, data) => {
                 trace!("input Data({v_port}, len()={})", data.len());
-                let action = self.write_to(v_port, data).await;
-                self.schedule(action);
+                self.write_to(v_port, data).await
             }
         }
     }
@@ -231,7 +223,7 @@ impl TcpBridge {
     ///
     /// # Cancel safety
     /// This method is not cancellation safe.
-    async fn write_to<'a>(&mut self, v_port: u16, data: &'a [u8]) -> Option<ErrorAction> {
+    async fn write_to<'a>(&mut self, v_port: u16, data: &'a [u8]) -> Option<Action<'static>> {
         if data.is_empty() {
             // empty a.k.a. len() == 0 means EOF on other side
             // remove and close stream
@@ -241,11 +233,11 @@ impl TcpBridge {
 
         let Some(local_tx) = self.streams.get_mut(&v_port) else {
             warn!("got Data for already closed v_port, {v_port}, emitting NotConnected Error");
-            return Some(ErrorAction(v_port, io::Error::new(io::ErrorKind::NotConnected, "err")));
+            return Some(Action::Error(v_port, io::Error::new(io::ErrorKind::NotConnected, "err")));
         };
 
         match local_tx.write_all(data).await {
-            Err(err) => Some(ErrorAction(v_port, err)),
+            Err(err) => Some(Action::Error(v_port, err)),
             Ok(()) => None,
         }
     }
@@ -261,13 +253,13 @@ impl TcpBridge {
     /// This method is to be assumed not cancel safe.
     /// The cancel safety of this method cannot be garanteed since the underlying
     /// `socket.connect` future does not make any statements about cancel safety
-    async fn connect_new(&mut self, v_port: u16) -> Option<ErrorAction> {
+    async fn connect_new(&mut self, v_port: u16) -> Option<Action<'static>> {
         assert!(self.opt_listener.is_none()); // ensure we are not the listening side
 
         let addr_l = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port));
         let stream = match TcpStream::connect(addr_l).await {
             Ok(stream) => stream,
-            Err(err) => return Some(ErrorAction(v_port, err)),
+            Err(err) => return Some(Action::Error(v_port, err)),
         };
 
         self.streams.insert(v_port, stream);
@@ -302,12 +294,6 @@ impl TcpBridge {
     /// Close all active connections without destroying the bridge
     pub fn remote_disconnect(&mut self) {
         self.streams.clear();
-    }
-
-    #[inline]
-    fn schedule(&mut self, action: Option<ErrorAction>) {
-        assert!(self.scheduled.is_none());
-        self.scheduled = action;
     }
 }
 

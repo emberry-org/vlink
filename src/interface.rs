@@ -15,6 +15,7 @@ pub enum Action<'a> {
     /// respective connections.
     Connect(u16),
     /// `Data( ... ).0` - The `v_port`. Real port of the original "client" socket and id to the connection.
+    ///
     /// `Data( ... ).1` - The binary `data` of this operation
     ///
     /// When extracted:
@@ -26,6 +27,7 @@ pub enum Action<'a> {
     /// `data` should be inserted to the connection indentified via `v_port`
     Data(u16, &'a [u8]),
     /// `Error( ... ).0` - The `v_port`. Real port of the original "client" socket and id to the connection.
+    ///
     /// `Error( ... ).1` - The `error`
     ///
     /// When extracted:
@@ -51,6 +53,3 @@ pub enum Action<'a> {
     /// existing connections have terminated.
     AcceptError(io::Error),
 }
-
-#[derive(Debug)]
-pub(crate) struct ErrorAction(pub u16, pub io::Error);

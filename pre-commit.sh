@@ -39,6 +39,7 @@ run() {
 }
 
 run "git_newline"
+run "cargo audit"
 run "cargo fmt --check"
 run "cargo clippy --all-targets --all-features"
 run "cargo test"
